@@ -1,0 +1,246 @@
+---
+title: "Regression Models - Course Project"
+author: "Philip Mateescu"
+date: "December 26, 2015"
+output: html_document
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(GGally)
+library(ggfortify)
+library(datasets)
+library(dplyr)
+library(knitr)
+library(car)
+arsq <- function(model) summary(model)$adj.r.squared
+    
+```
+
+# Impact of Transmission Type of Automobile Mileage
+
+## Synopsis/Executive Summary
+
+Fuel efficiency, expressed in miles-per-gallon, or *mpg* in short, is a common selection criteris when comparing cars.
+
+Using a dataset extracted from the 1974 *Motor Trend US* magazine, 
+and comprising of fuel consumption and 10 aspects of automobile design and performance for 32 automobiles (1973–74 models),
+we will explore the relationship between automatic or manual transmission types and the fuel consumption to answer 
+the following questions:
+
+- “Is an automatic or manual transmission better for MPG”
+- "Quantify the MPG difference between automatic and manual transmissions"
+
+
+Using simple linear regression analyses, we have determined that there is a significant difference between 
+automatic and manual transmissions in cars. The cars equiped with manual transmission obtain an average of 
+7.97 more miles per gallon when compared to cars equiped with automatic transmission, when accounting 
+for all other factors impacting fuel consumption.
+
+
+## Exploratory Data Analysis
+
+In order to make better use of the `mtcars` dataset I have changed the type of some of the columns
+to better reflect their underlying types, for example changing the `cyl` column, 
+the number of cylinders, from a `numeric` to a `factor`, to indicate that this is *not*
+a continuous measurement and changing the factors of the `am` column from `0, 1` to `A, M`.  
+See **Appendix - Table 1** for all changes made and **Appendix - Table 2** for a sample dataset.
+
+
+```{r echo=FALSE}
+oldtypes <- sapply(mtcars, class)
+mtcars$cyl <- as.factor(mtcars$cyl)
+mtcars$am <- as.factor(mtcars$am)
+levels(mtcars$am) <- c('A', 'M')
+mtcars$gear <- as.factor(mtcars$gear)
+mtcars$carb <- as.factor(mtcars$carb)
+newtypes <- sapply(mtcars, class)
+old.to.new.columns <- data.frame(Old.Types=oldtypes, New.Types=newtypes)
+```
+```{r echo=FALSE}
+a.avg <-  mean(mtcars$mpg[which(mtcars$am == 'A')])
+a.sd <- sd(mtcars$mpg[which(mtcars$am == 'A')])
+m.avg <- mean(mtcars$mpg[which(mtcars$am == 'M')])
+m.sd <- sd(mtcars$mpg[which(mtcars$am == 'M')])
+```
+
+**Appendix - Table 3**  shows there is a difference between the average mpg of automatic cars --
+``r a.avg``mpg, with a standard deviation of 
+``r a.sd`` -- and the **higher** average mpg 
+of cars equipped with manual transmission, at ``r m.avg``mpg, 
+with a standard deviation of ``r m.sd``.  
+**Appendix - Figure 1** shows a box-plot of the transmission/mpg relationship.
+
+Fitting a linear model with `am` as the regressor and `mpg` as the outcome,
+shows there is a significant relationship between the two (*p-value* < 0.001).  
+See **Appendix - Table 4 - Summary of base linear model**.
+
+```{r}
+model.base <- lm(mpg ~ am, mtcars)
+```
+
+However, an *Adjusted R-squared* of 0.34 indicates only about a third 
+of the variation in mileage can be explained by the choice of transmission.
+
+
+## Statistical Inference
+
+Under the assumption that the `mpg` has a normal distribution, w
+we  the null hypothesis, *H0*, as: manual and automatic transmission 
+come from the same population. 
+
+```{r}
+h0 <- t.test(mpg ~ am, data = mtcars)
+```
+
+Using an unpaired, two-sided T-test at 95% confidence level, yields a
+p-value of ``r h0$p.value``. Since the *p-value* is less than 0.05,
+we reject our null hypothesis, thus
+the automatic and manual transmissions come from different populations.
+
+## Model Selection
+
+We will use the [Akaike information criterion](https://en.wikipedia.org/wiki/Akaike_information_criterion)
+and the step function to choose the model best fitted to explain the variation in mpg. 
+
+```{r}
+model.best <- step(lm(mpg ~ ., mtcars), k=log(nrow(mtcars)), trace = 0)
+```
+
+According to **Appendix - Table 5 - Summary of best linear model**, 
+the model using `wt` - weight, `qsec` - quarter-mile time, and `am` - transmission type,
+explains 83% percent of the variance of the `mpg` variable., and all variables are 
+significant at the 0.05 level or smaller.
+
+However, in consulting with our imaginary engine experts, we have learned that 
+the quarter-mile time is likely inversely proportional to the horsepower of the car (when weight is constant).
+
+Horsepower itself is a complex relationship of engine configuration (size, number of cylinders, engine geometry, number of carburetors)
+and gearing - `gear`. All there variables 
+are likely confounding for the quarter-mile time. Let's examine a model that regresses on horsepower 
+and compare it to a model that uses the individual variables.
+
+```{r}
+model.amwt <- lm(mpg ~ am + wt, mtcars)
+model.hp <- update(model.amwt, mpg ~ am + wt + hp)
+model.engine <- update(model.amwt, mpg ~ am + wt + disp + gear + cyl + carb + vs)
+df.comp1 <- data.frame(
+    arsq(model.amwt), 
+    arsq(model.hp), 
+    arsq(model.engine))
+kable(df.comp1, col.names = c('am+wt', 'am+wt+hp', 'am+wt+disp+gear+cyl+carb+vs'), caption = 'Adjusted R-squared values for 3 models')
+```
+
+We notice that while adding the engine configuration explains the variation better than weight + transmission type alone, 
+adding the horsepower to the `am + wt` model explains 82% of the variance, close to the best model chosen by 
+the step function, but considerably easier to explain even to novice readers.
+
+Going back to our cars experts with our findings, we found them keen to point out that there is an interaction
+between the transmission type and the weight of the car, given that automatic transmissions tend to simply weigh more.  
+Armed with this new knowledge, let's consider a model where the `wt` and `am` interact.
+
+```{r}
+model.final <- lm(mpg ~ am + wt + am:wt + hp, mtcars)
+```
+
+Surprisingly (or perhaps not), a collaboration between the statistics student and the car experts
+produce a model that explains the variance even better than the model selected by the step function:
+a whooping **85%** and all variables statistically significant at level 0.05 or lower! 
+See **Appendix - Table 6 - Summary of final linear model**.
+
+(Note: we'd be disingenuous if we didn't point out that if we take `step`'s best model and include the `am:wt` interaction we
+get an even better ``r arsq(lm(mpg ~ am + wt + qsec + am:wt, mtcars))`` adjusted R-squared).
+
+This model shows that when weight and horsepower remain constant, cars with manual transmission 
+get `11.55 + (-3.58) =` ``r 11.55-3.58`` more miles per gallong than cars equiped with automatic transmission.
+
+### Residuals and Diagnostics
+
+In this section, we'll perform a few diagnostics of our model, examine the residuals and leverage variables
+in order to detect any potential problems with our model.
+
+We start with a diagnostic plot of our model, shows in the **Appendix - Figure 2**. From these four chart 
+can observe that:
+
+- There is no consistent pattern when examining *Fitted Values vs Residuals*, thus supporting the independence of our chosed predictors;
+- The *Normal Q-Q* plot indicates the standardized residuals are normally distributed and close to out fitted line;
+- The *Scale-Location* chart shows scatter, thus confirming constant variance,
+- Finally, the *Residuals vs Leverage* chart, shows that while we have outliest, none have considerable leverage (all within the 0-0.5 band).
+
+The `hatvalues` function gives us the leverage points in the model. The top 3 points are:
+``` {r}
+leverage <- hatvalues(model.final)
+tail(sort(leverage), n = 3)
+```
+
+The top 3 most influential cars can be found using the `dfbetas` function:
+```{r}
+influence <- dfbetas(model.final)
+tail(sort(influence[,2]), n = 3)
+```
+
+\pagebreak
+
+# Appendix
+
+## Tables
+
+#### Table 1 - Changes in variable types
+```{r}
+kable(old.to.new.columns, caption = '')
+```
+
+#### Table 2 - Sample data from *mtcars*
+```{r}
+print(mtcars[2:5,])
+```
+
+#### Table 3 - Averages and standard deviations of fuel consumptions for automatic and manual cars
+
+```{r}
+avgsd <- data.frame(Automatic = c(a.avg, a.sd), Manual = c(m.avg, m.sd))
+row.names(avgsd) <- c('Average mpg', 'Std dev')
+kable(avgsd, row.names = TRUE)
+```
+
+#### Table 4 - Summary of base linear model
+```{r}
+summary(model.base)
+```
+#### Table 5 - Summary of best linear model
+```{r}
+summary(model.best)
+```
+
+#### Table 6 - Summary of final linear model
+```{r}
+summary(model.final)
+```
+
+
+## Charts
+
+#### Figure 1 - Transmission Type vs MPG
+
+.
+
+```{r}
+ggplot(mtcars, aes(am, mpg, col = am)) + geom_boxplot() + geom_jitter(aes(col=am)) +
+    labs(x='Transmission Type', y = 'mpg') + 
+    theme(legend.position='none')
+ 
+```
+
+#### Figure 2 - Diagnostic Plots for model *mpg ~ am + wt + am:wt + hp*
+
+.
+
+```{r}
+# using ggplot and ggfortiy to create a diagnostic plot similar to the one plot.lm produces
+# but prettier
+# source: http://rpubs.com/sinhrks/plot_lm
+autoplot(model.final, data = mtcars, colour = 'am', label.size=3, main='Model mpg ~ am + wt + am:wt + hp') + 
+    theme(legend.position='none')
+```
+**Legend**: red dots - Automatic transmission, teal dots - Manual transmission
+
